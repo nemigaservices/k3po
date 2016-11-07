@@ -1,5 +1,5 @@
-/*
- * Copyright 2014, Kaazing Corporation. All rights reserved.
+/**
+ * Copyright 2007-2015, Kaazing Corporation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.kaazing.k3po.driver.internal.behavior.visitor;
 
 import static java.lang.String.format;
@@ -25,12 +24,12 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import javax.el.ELResolver;
@@ -78,16 +77,22 @@ import org.kaazing.k3po.driver.internal.behavior.handler.codec.http.HttpParamete
 import org.kaazing.k3po.driver.internal.behavior.handler.codec.http.HttpRequestFormEncoder;
 import org.kaazing.k3po.driver.internal.behavior.handler.codec.http.HttpStatusDecoder;
 import org.kaazing.k3po.driver.internal.behavior.handler.codec.http.HttpStatusEncoder;
+import org.kaazing.k3po.driver.internal.behavior.handler.codec.http.HttpTrailerDecoder;
+import org.kaazing.k3po.driver.internal.behavior.handler.codec.http.HttpTrailerEncoder;
 import org.kaazing.k3po.driver.internal.behavior.handler.codec.http.HttpVersionDecoder;
 import org.kaazing.k3po.driver.internal.behavior.handler.codec.http.HttpVersionEncoder;
+import org.kaazing.k3po.driver.internal.behavior.handler.command.AbortHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.command.CloseHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.command.DisconnectHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.command.FlushHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.command.ReadConfigHandler;
+import org.kaazing.k3po.driver.internal.behavior.handler.command.ReadOptionOffsetHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.command.ShutdownOutputHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.command.UnbindHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.command.WriteConfigHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.command.WriteHandler;
+import org.kaazing.k3po.driver.internal.behavior.handler.command.WriteOptionOffsetHandler;
+import org.kaazing.k3po.driver.internal.behavior.handler.event.AbortedHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.event.BoundHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.event.ChildClosedHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.event.ChildOpenedHandler;
@@ -97,14 +102,18 @@ import org.kaazing.k3po.driver.internal.behavior.handler.event.DisconnectedHandl
 import org.kaazing.k3po.driver.internal.behavior.handler.event.InputShutdownHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.event.OpenedHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.event.ReadHandler;
+import org.kaazing.k3po.driver.internal.behavior.handler.event.ReadHttpTrailersHandler;
 import org.kaazing.k3po.driver.internal.behavior.handler.event.UnboundHandler;
 import org.kaazing.k3po.driver.internal.behavior.visitor.GenerateConfigurationVisitor.State;
 import org.kaazing.k3po.driver.internal.netty.bootstrap.BootstrapFactory;
 import org.kaazing.k3po.driver.internal.netty.channel.ChannelAddressFactory;
 import org.kaazing.k3po.driver.internal.resolver.ClientBootstrapResolver;
 import org.kaazing.k3po.driver.internal.resolver.LocationResolver;
+import org.kaazing.k3po.driver.internal.resolver.OptionsResolver;
 import org.kaazing.k3po.driver.internal.resolver.ServerBootstrapResolver;
 import org.kaazing.k3po.lang.internal.RegionInfo;
+import org.kaazing.k3po.lang.internal.ast.AstAbortNode;
+import org.kaazing.k3po.lang.internal.ast.AstAbortedNode;
 import org.kaazing.k3po.lang.internal.ast.AstAcceptNode;
 import org.kaazing.k3po.lang.internal.ast.AstAcceptableNode;
 import org.kaazing.k3po.lang.internal.ast.AstBoundNode;
@@ -151,7 +160,6 @@ import org.kaazing.k3po.lang.internal.ast.matcher.AstVariableLengthBytesMatcher;
 import org.kaazing.k3po.lang.internal.ast.value.AstExpressionValue;
 import org.kaazing.k3po.lang.internal.ast.value.AstLiteralBytesValue;
 import org.kaazing.k3po.lang.internal.ast.value.AstLiteralTextValue;
-import org.kaazing.k3po.lang.internal.ast.value.AstLocation;
 import org.kaazing.k3po.lang.internal.ast.value.AstValue;
 import org.kaazing.k3po.lang.internal.el.ExpressionContext;
 
@@ -176,8 +184,8 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         /* The pipelineAsMap is built by each node that is visited. */
         private Map<String, ChannelHandler> pipelineAsMap;
 
-        public State() {
-            barriersByName = new ConcurrentHashMap<String, Barrier>();
+        public State(ConcurrentMap<String, Barrier> barriersByName) {
+            this.barriersByName = barriersByName;
         }
 
         private Barrier lookupBarrier(String barrierName) {
@@ -194,17 +202,22 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         }
 
         public class PipelineFactory {
-            private Map<URI, List<ChannelPipeline>> pipelines = new HashMap<URI, List<ChannelPipeline>>();
+            private Map<URI, List<ChannelPipeline>> pipelines = new HashMap<>();
 
             public List<ChannelPipeline> getPipeline(URI acceptURI) {
                 List<ChannelPipeline> pipeline = pipelines.get(acceptURI);
                 if (pipeline == null) {
-                    pipeline = new ArrayList<ChannelPipeline>();
+                    pipeline = new ArrayList<>();
                     pipelines.put(acceptURI, pipeline);
                 }
                 return pipeline;
             }
         }
+
+        public Map<String, Barrier> getBarriersByName() {
+            return barriersByName;
+        }
+
     }
 
     public GenerateConfigurationVisitor(BootstrapFactory bootstrapFactory, ChannelAddressFactory addressFactory) {
@@ -240,6 +253,10 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         // TODO: Remove when JUEL sync bug is fixed https://github.com/k3po/k3po/issues/147
         synchronized (environment) {
             resolver.setValue(environment, null, propertyName, value);
+        }
+
+        if (value instanceof AutoCloseable) {
+            state.configuration.getResources().add((AutoCloseable) value);
         }
 
         if (LOGGER.isDebugEnabled()) {
@@ -278,7 +295,7 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         // masking is a no-op by default for each stream
         state.readUnmasker = Masker.IDENTITY_MASKER;
         state.writeMasker = Masker.IDENTITY_MASKER;
-        state.pipelineAsMap = new LinkedHashMap<String, ChannelHandler>();
+        state.pipelineAsMap = new LinkedHashMap<>();
 
         for (AstStreamableNode streamable : acceptedNode.getStreamables()) {
             streamable.accept(this, state);
@@ -303,8 +320,8 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         state.writeMasker = Masker.IDENTITY_MASKER;
 
         /* Create a list of pipelines, for each acceptable */
-        final List<ChannelPipeline> pipelines = new ArrayList<ChannelPipeline>();
-        state.pipelineAsMap = new LinkedHashMap<String, ChannelHandler>();
+        final List<ChannelPipeline> pipelines = new ArrayList<>();
+        state.pipelineAsMap = new LinkedHashMap<>();
 
         for (AstAcceptableNode acceptableNode : acceptNode.getAcceptables()) {
 
@@ -335,10 +352,13 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
 
         Map<String, Object> acceptOptions = new HashMap<>();
         acceptOptions.put("regionInfo", acceptInfo);
-        AstLocation transport = (AstLocation) acceptNode.getOptions().get("transport");
-        LocationResolver transportResolver = null;
-        if (transport != null) {
-            transportResolver = new LocationResolver(transport, acceptNode.getEnvironment());
+        acceptOptions.putAll(acceptNode.getOptions());
+        OptionsResolver optionsResolver = new OptionsResolver(acceptOptions, acceptNode.getEnvironment());
+
+        String notifyName = acceptNode.getNotifyName();
+        Barrier notifyBarrier = null;
+        if (notifyName != null) {
+            notifyBarrier = state.lookupBarrier(notifyName);
         }
 
         // Now that accept supports expression value, accept uri may not be available at this point.
@@ -347,7 +367,7 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         // accept uri is available.
         LocationResolver locationResolver = new LocationResolver(acceptNode.getLocation(), acceptNode.getEnvironment());
         ServerBootstrapResolver serverResolver = new ServerBootstrapResolver(bootstrapFactory, addressFactory,
-                pipelineFactory, locationResolver, transportResolver, acceptOptions);
+                pipelineFactory, locationResolver, optionsResolver, notifyBarrier);
 
         state.configuration.getServerResolvers().add(serverResolver);
 
@@ -365,7 +385,7 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         state.readUnmasker = Masker.IDENTITY_MASKER;
         state.writeMasker = Masker.IDENTITY_MASKER;
 
-        state.pipelineAsMap = new LinkedHashMap<String, ChannelHandler>();
+        state.pipelineAsMap = new LinkedHashMap<>();
 
         for (AstStreamableNode streamable : connectNode.getStreamables()) {
             streamable.accept(this, state);
@@ -377,10 +397,10 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         completionHandler.setRegionInfo(connectNode.getRegionInfo());
         state.pipelineAsMap.put(handlerName, completionHandler);
 
-        String barrierName = connectNode.getBarrier();
-        Barrier barrier = null;
-        if (barrierName != null) {
-            barrier = state.lookupBarrier(barrierName);
+        String awaitName = connectNode.getAwaitName();
+        Barrier awaitBarrier = null;
+        if (awaitName != null) {
+            awaitBarrier = state.lookupBarrier(awaitName);
         }
 
         final ChannelPipeline pipeline = pipelineFromMap(state.pipelineAsMap);
@@ -408,15 +428,10 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         // ClientResolver are created with information necessary to create ClientBootstrap when the connect uri
         // is available.
         LocationResolver locationResolver = new LocationResolver(connectNode.getLocation(), connectNode.getEnvironment());
-        Map<String, Object> connectOptions = new HashMap<>();
-        AstLocation transport = (AstLocation) connectNode.getOptions().get("transport");
-        LocationResolver transportResolver = null;
-        if (transport != null) {
-            transportResolver = new LocationResolver(transport, connectNode.getEnvironment());
-        }
+        OptionsResolver optionsResolver = new OptionsResolver(connectNode.getOptions(), connectNode.getEnvironment());
 
         ClientBootstrapResolver clientResolver = new ClientBootstrapResolver(bootstrapFactory, addressFactory,
-                pipelineFactory, locationResolver, transportResolver, barrier, connectNode.getRegionInfo(), connectOptions);
+                pipelineFactory, locationResolver, optionsResolver, awaitBarrier, connectNode.getRegionInfo());
 
         // retain pipelines for tear down
         state.configuration.getClientAndServerPipelines().add(pipeline);
@@ -503,7 +518,7 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
 
     @Override
     public Configuration visit(AstWriteValueNode node, State state) throws Exception {
-        List<MessageEncoder> messageEncoders = new ArrayList<MessageEncoder>();
+        List<MessageEncoder> messageEncoders = new ArrayList<>();
 
         for (AstValue val : node.getValues()) {
             messageEncoders.add(val.accept(new GenerateWriteEncoderVisitor(), state.configuration));
@@ -574,6 +589,21 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
 
         Map<String, ChannelHandler> pipelineAsMap = state.pipelineAsMap;
         String handlerName = String.format("close#%d", pipelineAsMap.size() + 1);
+        pipelineAsMap.put(handlerName, handler);
+
+        return state.configuration;
+    }
+
+    @Override
+    public Configuration visit(AstAbortNode node, State state) throws Exception {
+
+        RegionInfo regionInfo = node.getRegionInfo();
+
+        AbortHandler handler = new AbortHandler();
+        handler.setRegionInfo(regionInfo);
+
+        Map<String, ChannelHandler> pipelineAsMap = state.pipelineAsMap;
+        String handlerName = String.format("abort#%d", pipelineAsMap.size() + 1);
         pipelineAsMap.put(handlerName, handler);
 
         return state.configuration;
@@ -657,7 +687,7 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
     @Override
     public Configuration visit(AstReadValueNode node, State state) throws Exception {
 
-        List<MessageDecoder> messageDecoders = new ArrayList<MessageDecoder>();
+        List<MessageDecoder> messageDecoders = new ArrayList<>();
 
         for (AstValueMatcher matcher : node.getMatchers()) {
             messageDecoders.add(matcher.accept(new GenerateReadDecoderVisitor(), state.configuration));
@@ -823,6 +853,21 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
         return state.configuration;
     }
 
+    @Override
+    public Configuration visit(AstAbortedNode node, State state) throws Exception {
+
+        RegionInfo regionInfo = node.getRegionInfo();
+
+        AbortedHandler handler = new AbortedHandler();
+        handler.setRegionInfo(regionInfo);
+
+        Map<String, ChannelHandler> pipelineAsMap = state.pipelineAsMap;
+        String handlerName = String.format("aborted#%d", pipelineAsMap.size() + 1);
+        pipelineAsMap.put(handlerName, handler);
+
+        return state.configuration;
+    }
+
     private static ChannelPipeline pipelineFromMap(Map<String, ChannelHandler> pipelineAsMap) {
         ChannelPipeline pipeline = pipeline();
         for (Map.Entry<String, ChannelHandler> entry : pipelineAsMap.entrySet()) {
@@ -856,7 +901,7 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
             AstLiteralTextValue name = (AstLiteralTextValue) node.getValue("name");
             requireNonNull(name);
 
-            List<MessageDecoder> valueDecoders = new ArrayList<MessageDecoder>();
+            List<MessageDecoder> valueDecoders = new ArrayList<>();
             for (AstValueMatcher matcher : node.getMatchers()) {
                 valueDecoders.add(matcher.accept(new GenerateReadDecoderVisitor(), state.configuration));
             }
@@ -889,7 +934,7 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
             AstLiteralTextValue name = (AstLiteralTextValue) node.getValue("name");
             requireNonNull(name);
 
-            List<MessageDecoder> valueDecoders = new ArrayList<MessageDecoder>();
+            List<MessageDecoder> valueDecoders = new ArrayList<>();
             for (AstValueMatcher matcher : node.getMatchers()) {
                 valueDecoders.add(matcher.accept(new GenerateReadDecoderVisitor(), state.configuration));
             }
@@ -932,6 +977,32 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
             pipelineAsMap.put(handlerName, handler);
             return state.configuration;
         }
+        case "trailer": {
+            AstLiteralTextValue name = (AstLiteralTextValue) node.getValue("name");
+
+            List<MessageDecoder> valueDecoders = new ArrayList<>();
+            for (AstValueMatcher matcher : node.getMatchers()) {
+                valueDecoders.add(matcher.accept(new GenerateReadDecoderVisitor(), state.configuration));
+            }
+
+            HttpTrailerDecoder httpTrailerDecoder = new HttpTrailerDecoder(name.getValue(), valueDecoders);
+            ReadHttpTrailersHandler handler =
+                    new ReadHttpTrailersHandler(httpTrailerDecoder);
+
+            // Ideally we could use a ReadConfigHandler as follows, but the trailers come insync with
+            // with the channel close, which completes the composite future of all handlers and checks
+            // the ReadConfigHandler to see if it completed.
+            // HttpTrailerDecoder decoder = new HttpTrailerDecoder(name.getValue(), valueDecoders);
+            // decoder.setRegionInfo(node.getRegionInfo());
+            // ReadConfigHandler handler = new ReadConfigHandler(decoder);
+
+            httpTrailerDecoder.setRegionInfo(node.getRegionInfo());
+            handler.setRegionInfo(node.getRegionInfo());
+            Map<String, ChannelHandler> pipelineAsMap = state.pipelineAsMap;
+            String handlerName = String.format("readConfig#%d (http status)", pipelineAsMap.size() + 1);
+            pipelineAsMap.put(handlerName, handler);
+            return state.configuration;
+        }
         default:
             throw new IllegalStateException("Unrecognized configuration type: " + node.getType());
         }
@@ -955,7 +1026,7 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
             AstValue name = node.getName("name");
             MessageEncoder nameEncoder = name.accept(new GenerateWriteEncoderVisitor(), state.configuration);
 
-            List<MessageEncoder> valueEncoders = new ArrayList<MessageEncoder>();
+            List<MessageEncoder> valueEncoders = new ArrayList<>();
             for (AstValue value : node.getValues()) {
                 valueEncoders.add(value.accept(new GenerateWriteEncoderVisitor(), state.configuration));
             }
@@ -997,7 +1068,7 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
             AstValue name = node.getName("name");
             MessageEncoder nameEncoder = name.accept(new GenerateWriteEncoderVisitor(), state.configuration);
 
-            List<MessageEncoder> valueEncoders = new ArrayList<MessageEncoder>();
+            List<MessageEncoder> valueEncoders = new ArrayList<>();
             for (AstValue value : node.getValues()) {
                 valueEncoders.add(value.accept(new GenerateWriteEncoderVisitor(), state.configuration));
             }
@@ -1032,6 +1103,21 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
 
             handler.setRegionInfo(node.getRegionInfo());
             String handlerName = String.format("writeConfig#%d (http status)", state.pipelineAsMap.size() + 1);
+            state.pipelineAsMap.put(handlerName, handler);
+            return state.configuration;
+        }
+        case "trailer": {
+            AstValue name = node.getName("name");
+
+            MessageEncoder nameEncoder = name.accept(new GenerateWriteEncoderVisitor(), state.configuration);
+
+            List<MessageEncoder> valueEncoders = new ArrayList<>();
+            for (AstValue value : node.getValues()) {
+                valueEncoders.add(value.accept(new GenerateWriteEncoderVisitor(), state.configuration));
+            }
+
+            WriteConfigHandler handler = new WriteConfigHandler(new HttpTrailerEncoder(nameEncoder, valueEncoders));
+            String handlerName = String.format("writeConfig#%d (http trailer)", state.pipelineAsMap.size() + 1);
             state.pipelineAsMap.put(handlerName, handler);
             return state.configuration;
         }
@@ -1074,10 +1160,29 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
     public Configuration visit(AstReadOptionNode node, State state) throws Exception {
 
         String optionName = node.getOptionName();
-        AstValue optionValue = node.getOptionValue();
+        switch (optionName) {
+            case "mask" :
+                AstValue maskValue = node.getOptionValue();
+                state.readUnmasker = maskValue.accept(new GenerateMaskOptionValueVisitor(), state);
+                break;
 
-        assert "mask".equals(optionName);
-        state.readUnmasker = optionValue.accept(new GenerateMaskOptionValueVisitor(), state);
+            case "offset" :
+                AstLiteralTextValue offsetValue = (AstLiteralTextValue) node.getOptionValue();
+                int offset = Integer.parseInt(offsetValue.getValue());
+                ReadOptionOffsetHandler handler = new ReadOptionOffsetHandler(offset);
+                handler.setRegionInfo(node.getRegionInfo());
+                String handlerName = String.format("readOption#%d (offset=%d)", state.pipelineAsMap.size() + 1, offset);
+                state.pipelineAsMap.put(handlerName, handler);
+                break;
+
+            case "chunkExtension":
+                throw new UnsupportedOperationException(
+                        "HttpMessageDecoder and DefaultHttpChunk do not support chunkExtensions in Netty 3.9,"
+                        + " see https://github.com/k3po/k3po/issues/313, support for chunk extensions is thus not yet added");
+
+            default:
+                throw new IllegalArgumentException("Unrecognized read option : " + optionName);
+        }
 
         return state.configuration;
     }
@@ -1086,10 +1191,28 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
     public Configuration visit(AstWriteOptionNode node, State state) throws Exception {
 
         String optionName = node.getOptionName();
-        AstValue optionValue = node.getOptionValue();
+        switch (optionName) {
+            case "mask" :
+                AstValue maskValue = node.getOptionValue();
+                state.writeMasker = maskValue.accept(new GenerateMaskOptionValueVisitor(), state);
+                break;
 
-        assert "mask".equals(optionName);
-        state.writeMasker = optionValue.accept(new GenerateMaskOptionValueVisitor(), state);
+            case "offset" :
+                AstLiteralTextValue offsetValue = (AstLiteralTextValue) node.getOptionValue();
+                int offset = Integer.parseInt(offsetValue.getValue());
+                WriteOptionOffsetHandler handler = new WriteOptionOffsetHandler(offset);
+                handler.setRegionInfo(node.getRegionInfo());
+                String handlerName = String.format("writeOption#%d (offset=%d)", state.pipelineAsMap.size() + 1, offset);
+                state.pipelineAsMap.put(handlerName, handler);
+                break;
+
+            case "chunkExtension":
+                throw new UnsupportedOperationException(
+                        "HttpMessageDecoder and DefaultHttpChunk do not support chunkExtensions in Netty 3.9,"
+                        + " see https://github.com/k3po/k3po/issues/313, support for chunk extensions is thus not yet added");
+            default:
+                throw new IllegalArgumentException("Unrecognized write option : " + optionName);
+        }
 
         return state.configuration;
     }
@@ -1111,8 +1234,8 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
             String literalText = value.getValue();
             byte[] literalTextAsBytes = literalText.getBytes(UTF_8);
 
-            for (int i = 0; i < literalTextAsBytes.length; i++) {
-                if (literalTextAsBytes[i] != 0x00) {
+            for (byte literalTextAsByte : literalTextAsBytes) {
+                if (literalTextAsByte != 0x00) {
                     return Maskers.newMasker(literalTextAsBytes);
                 }
             }
@@ -1126,8 +1249,8 @@ public class GenerateConfigurationVisitor implements AstNode.Visitor<Configurati
 
             byte[] literalBytes = value.getValue();
 
-            for (int i = 0; i < literalBytes.length; i++) {
-                if (literalBytes[i] != 0x00) {
+            for (byte literalByte : literalBytes) {
+                if (literalByte != 0x00) {
                     return Maskers.newMasker(literalBytes);
                 }
             }

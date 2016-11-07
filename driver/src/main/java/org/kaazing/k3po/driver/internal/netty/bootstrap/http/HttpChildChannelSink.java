@@ -1,5 +1,5 @@
-/*
- * Copyright 2014, Kaazing Corporation. All rights reserved.
+/**
+ * Copyright 2007-2015, Kaazing Corporation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.kaazing.k3po.driver.internal.netty.bootstrap.http;
 
 import static java.util.Objects.requireNonNull;
@@ -36,6 +35,9 @@ import static org.kaazing.k3po.driver.internal.netty.bootstrap.http.HttpChildCha
 import static org.kaazing.k3po.driver.internal.netty.bootstrap.http.HttpChildChannel.HttpWriteState.CONTENT_COMPLETE;
 import static org.kaazing.k3po.driver.internal.netty.bootstrap.http.HttpChildChannel.HttpWriteState.UPGRADED;
 
+import java.util.Map;
+import java.util.Map.Entry;
+
 import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.channel.Channel;
 import org.jboss.netty.channel.ChannelFuture;
@@ -44,8 +46,10 @@ import org.jboss.netty.channel.ChannelPipeline;
 import org.jboss.netty.channel.ChannelStateEvent;
 import org.jboss.netty.channel.MessageEvent;
 import org.jboss.netty.handler.codec.http.DefaultHttpChunk;
+import org.jboss.netty.handler.codec.http.DefaultHttpChunkTrailer;
 import org.jboss.netty.handler.codec.http.DefaultHttpResponse;
 import org.jboss.netty.handler.codec.http.HttpChunk;
+import org.jboss.netty.handler.codec.http.HttpChunkTrailer;
 import org.jboss.netty.handler.codec.http.HttpHeaders;
 import org.jboss.netty.handler.codec.http.HttpHeaders.Names;
 import org.jboss.netty.handler.codec.http.HttpHeaders.Values;
@@ -55,6 +59,7 @@ import org.jboss.netty.handler.codec.http.HttpResponseEncoder;
 import org.jboss.netty.handler.codec.http.HttpResponseStatus;
 import org.jboss.netty.handler.codec.http.HttpVersion;
 import org.kaazing.k3po.driver.internal.netty.bootstrap.channel.AbstractChannelSink;
+import org.kaazing.k3po.driver.internal.netty.channel.AbortEvent;
 import org.kaazing.k3po.driver.internal.netty.channel.FlushEvent;
 import org.kaazing.k3po.driver.internal.netty.channel.ShutdownOutputEvent;
 
@@ -179,6 +184,16 @@ public class HttpChildChannelSink extends AbstractChannelSink {
     }
 
     @Override
+    protected void abortRequested(ChannelPipeline pipeline, final AbortEvent evt) throws Exception {
+        transport.close().addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) throws Exception {
+                evt.getFuture().setSuccess();
+            }
+        });
+    }
+
+    @Override
     protected void shutdownOutputRequested(ChannelPipeline pipeline, ShutdownOutputEvent evt) throws Exception {
         HttpChildChannel httpChildChannel = (HttpChildChannel) pipeline.getChannel();
         ChannelFuture httpFuture = evt.getFuture();
@@ -214,8 +229,9 @@ public class HttpChildChannelSink extends AbstractChannelSink {
             transport.close();
             break;
         case CONTENT_CHUNKED:
-            HttpChunk httpChunk = DefaultHttpChunk.LAST_CHUNK;
-            ChannelFuture future = transport.write(httpChunk);
+            HttpChunkTrailer trailingChunk = new DefaultHttpChunkTrailer();
+            trailingChunk.trailingHeaders().add(httpChildChannel.getConfig().getWriteTrailers());
+            ChannelFuture future = transport.write(trailingChunk);
             httpChildChannel.writeState(CONTENT_COMPLETE);
             future.addListener(new ChannelFutureListener() {
                 @Override

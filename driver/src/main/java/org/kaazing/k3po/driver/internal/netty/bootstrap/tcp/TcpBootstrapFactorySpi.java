@@ -1,5 +1,5 @@
-/*
- * Copyright 2014, Kaazing Corporation. All rights reserved.
+/**
+ * Copyright 2007-2015, Kaazing Corporation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.kaazing.k3po.driver.internal.netty.bootstrap.tcp;
 
 import java.net.InetSocketAddress;
@@ -41,6 +40,8 @@ import org.kaazing.k3po.driver.internal.netty.bootstrap.ClientBootstrap;
 import org.kaazing.k3po.driver.internal.netty.bootstrap.ServerBootstrap;
 import org.kaazing.k3po.driver.internal.netty.channel.ChannelAddress;
 
+import static org.kaazing.k3po.driver.internal.channel.Channels.toInetSocketAddress;
+
 public final class TcpBootstrapFactorySpi extends BootstrapFactorySpi implements ExternalResourceReleasable {
 
     private final Collection<ChannelFactory> channelFactories;
@@ -49,7 +50,7 @@ public final class TcpBootstrapFactorySpi extends BootstrapFactorySpi implements
     private NioServerSocketChannelFactory serverChannelFactory;
 
     public TcpBootstrapFactorySpi() {
-        channelFactories = new ConcurrentLinkedDeque<ChannelFactory>();
+        channelFactories = new ConcurrentLinkedDeque<>();
     }
 
     @Resource
@@ -147,21 +148,4 @@ public final class TcpBootstrapFactorySpi extends BootstrapFactorySpi implements
         };
     }
 
-    private static InetSocketAddress toInetSocketAddress(final SocketAddress localAddress) {
-        if (localAddress instanceof ChannelAddress) {
-            return toInetSocketAddress((ChannelAddress) localAddress);
-        } else {
-            return (InetSocketAddress) localAddress;
-        }
-    }
-
-    private static InetSocketAddress toInetSocketAddress(ChannelAddress channelAddress) {
-        if (channelAddress == null) {
-            return null;
-        }
-        URI location = channelAddress.getLocation();
-        String hostname = location.getHost();
-        int port = location.getPort();
-        return new InetSocketAddress(hostname, port);
-    }
 }

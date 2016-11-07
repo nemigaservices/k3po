@@ -1,5 +1,5 @@
-/*
- * Copyright 2014, Kaazing Corporation. All rights reserved.
+/**
+ * Copyright 2007-2015, Kaazing Corporation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.kaazing.k3po.driver.internal.netty.bootstrap.http;
 
 import static java.lang.String.format;
@@ -37,6 +36,8 @@ import org.jboss.netty.channel.ExceptionEvent;
 import org.jboss.netty.channel.MessageEvent;
 import org.jboss.netty.channel.SimpleChannelHandler;
 import org.jboss.netty.handler.codec.http.HttpChunk;
+import org.jboss.netty.handler.codec.http.HttpChunkTrailer;
+import org.jboss.netty.handler.codec.http.HttpHeaders;
 import org.jboss.netty.handler.codec.http.HttpRequestEncoder;
 import org.jboss.netty.handler.codec.http.HttpResponse;
 import org.jboss.netty.handler.codec.http.HttpResponseDecoder;
@@ -117,10 +118,16 @@ public class HttpClientChannelSource extends HttpChannelHandler {
         boolean last = httpChunk.isLast();
         if (last) {
             HttpClientChannel httpClientChannel = this.httpClientChannel;
+            if (httpChunk instanceof HttpChunkTrailer) {
+                HttpHeaders trailingHeaders = ((HttpChunkTrailer) httpChunk).trailingHeaders();
+                httpClientChannel.getConfig().getReadTrailers().set(trailingHeaders);
+            }
             this.httpClientChannel = null;
             fireInputShutdown(httpClientChannel);
 
             if (httpClientChannel.setClosed()) {
+                fireChannelDisconnected(httpClientChannel);
+                fireChannelUnbound(httpClientChannel);
                 fireChannelClosed(httpClientChannel);
             }
         }

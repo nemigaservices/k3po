@@ -1,5 +1,5 @@
-/*
- * Copyright 2014, Kaazing Corporation. All rights reserved.
+/**
+ * Copyright 2007-2015, Kaazing Corporation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.kaazing.k3po.driver.internal.channel;
 
 import static java.lang.String.format;
@@ -41,6 +40,24 @@ public final class Channels {
         return future;
     }
 
+    public static InetSocketAddress toInetSocketAddress(final SocketAddress localAddress) {
+        if (localAddress instanceof ChannelAddress) {
+            return toInetSocketAddress((ChannelAddress) localAddress);
+        } else {
+            return (InetSocketAddress) localAddress;
+        }
+    }
+
+    public static InetSocketAddress toInetSocketAddress(ChannelAddress channelAddress) {
+        if (channelAddress == null) {
+            return null;
+        }
+        URI location = channelAddress.getLocation();
+        String hostname = location.getHost();
+        int port = location.getPort();
+        return new InetSocketAddress(hostname, port);
+    }
+
     public static ChannelAddress localAddress(Channel channel) {
         SocketAddress localAddress = channel.getLocalAddress();
         return channelAddress(channel, localAddress);
@@ -51,7 +68,7 @@ public final class Channels {
         return channelAddress(channel, remoteAddress);
     }
 
-    private static ChannelAddress channelAddress(Channel channel, SocketAddress address) {
+    public static ChannelAddress channelAddress(Channel channel, SocketAddress address) {
         if (address instanceof ChannelAddress) {
             return (ChannelAddress) address;
         }

@@ -1,5 +1,5 @@
-/*
- * Copyright 2014, Kaazing Corporation. All rights reserved.
+/**
+ * Copyright 2007-2015, Kaazing Corporation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,13 @@
  * limitations under the License.
  */
 
-
 package org.kaazing.k3po.driver.internal.test.utils;
 
 import java.util.concurrent.CountDownLatch;
 
 class Latch {
 
-    static enum State {
+    enum State {
         INIT, PREPARED, STARTABLE, FINISHED
     }
 
@@ -67,6 +66,10 @@ class Latch {
         case PREPARED:
             state = State.STARTABLE;
             startable.countDown();
+            break;
+        case STARTABLE:
+        case FINISHED:
+            // its all right to call this multiple times if its prepared
             break;
         default:
             throw new IllegalStateException(state.name());

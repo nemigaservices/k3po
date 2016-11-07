@@ -32,7 +32,12 @@ streamNode
     ;
 
 acceptNode
-    : k=AcceptKeyword acceptURI=location ( AsKeyword text=Name )? (OptionKeyword TransportKeyword value=location)?
+    : k=AcceptKeyword (AwaitKeyword await=Name)? acceptURI=location (AsKeyword as=Name)?
+      (NotifyKeyword notify=Name)? 
+      (OptionKeyword TransportKeyword transport=location)?
+      (OptionKeyword ReaderKeyword reader=expressionValue)?
+      (OptionKeyword WriterKeyword writer=expressionValue)?
+      (OptionKeyword TimeoutKeyword timeout=DecimalLiteral)?
       serverStreamableNode*
     ;
 
@@ -41,7 +46,15 @@ acceptableNode
     ;
 
 connectNode
-    : k=ConnectKeyword (AwaitKeyword barrier=Name ConnectKeyword)? connectURI=location (OptionKeyword TransportKeyword value=location)? streamableNode+
+    : k=ConnectKeyword (AwaitKeyword await=Name ConnectKeyword?)? connectURI=location
+                       (OptionKeyword TransportKeyword transport=location)?
+                       (OptionKeyword SizeKeyword size=DecimalLiteral)?
+                       (OptionKeyword ModeKeyword fmode=ModeValue)?
+                       (OptionKeyword ReaderKeyword reader=expressionValue)?
+                       (OptionKeyword WriterKeyword writer=expressionValue)?
+                       (OptionKeyword TimeoutKeyword timeout=DecimalLiteral)?
+
+        streamableNode+
     ;
 
 serverStreamableNode
@@ -52,15 +65,37 @@ serverStreamableNode
     ;
     
 optionNode 
-    : readOptionNode
-    | writeOptionNode
+    : readOptionMaskNode
+    | readOptionOffsetNode
+    | writeOptionMaskNode
+    | writeOptionOffsetNode
+    | writeOptionHttpChunkExtensionNode
+    | readOptionHttpChunkExtensionNode
     ;
 
-writeOptionNode: 
-    k=WriteKeyword OptionKeyword name=MaskKeyword value=writeValue;
+readOptionMaskNode
+    : k=ReadKeyword OptionKeyword name=MaskKeyword value=writeValue
+    ;
 
-readOptionNode: 
-    k=ReadKeyword OptionKeyword name=MaskKeyword value=writeValue;
+readOptionOffsetNode
+    : k=ReadKeyword OptionKeyword name=OffsetKeyword value=writeValue
+    ;
+
+readOptionHttpChunkExtensionNode
+    : k=ReadKeyword OptionKeyword name=ChunkExtensionKeyWord value=writeValue
+    ;
+
+writeOptionMaskNode
+    : k=WriteKeyword OptionKeyword name=MaskKeyword value=writeValue
+    ;
+
+writeOptionOffsetNode
+    : k=WriteKeyword OptionKeyword name=OffsetKeyword value=writeValue
+    ;
+
+writeOptionHttpChunkExtensionNode
+    : k=WriteKeyword OptionKeyword name=ChunkExtensionKeyWord value=writeValue
+    ;
 
 serverCommandNode
     : unbindNode
@@ -90,12 +125,14 @@ commandNode
     | closeNode
     | writeHttpContentLengthNode
     | writeHttpHeaderNode
+    | writeHttpChunkTrailerNode
     | writeHttpHostNode
     | writeHttpMethodNode
     | writeHttpParameterNode
     | writeHttpRequestNode
     | writeHttpStatusNode
     | writeHttpVersionNode
+    | abortNode
     ;
 
 eventNode
@@ -108,10 +145,12 @@ eventNode
     | closedNode
     | connectedNode
     | readHttpHeaderNode
+    | readHttpChunkTrailerNode
     | readHttpMethodNode
     | readHttpParameterNode
     | readHttpVersionNode
     | readHttpStatusNode
+    | abortedNode
     ;
 
 barrierNode
@@ -171,6 +210,14 @@ openedNode
     : k=OpenedKeyword
     ;
 
+abortNode
+    : k=AbortKeyword
+    ;
+
+abortedNode
+    : k=AbortedKeyword
+    ;
+
 readClosedNode: 
     k=ReadKeyword ClosedKeyword;
 
@@ -202,8 +249,16 @@ readHttpHeaderNode
     : k=ReadKeyword HttpHeaderKeyword name=literalText (HttpMissingKeyword | matcher+)
     ;
 
+readHttpChunkTrailerNode
+    : k=ReadKeyword HttpChunkTrailerKeyword name=literalText (HttpMissingKeyword | matcher+)
+    ;
+
 writeHttpHeaderNode
     : k=WriteKeyword HttpHeaderKeyword name=literalText writeValue+
+    ;
+
+writeHttpChunkTrailerNode
+    : k=WriteKeyword HttpChunkTrailerKeyword name=literalText writeValue+
     ;
 
 writeHttpContentLengthNode
@@ -334,17 +389,33 @@ SignedDecimalLiteral
 //    |  DecimalLiteral
     ;
 
+MaskKeyword: 'mask';
+
+ModeKeyword: 'mode';
+
+OffsetKeyword : 'offset';
+
 OptionKeyword: 'option';
 
-MaskKeyword: 'mask';
+ReaderKeyword: 'reader';
+
+SizeKeyword: 'size';
+
+ChunkExtensionKeyWord: 'chunkExtension';
+
+ShortKeyword
+    : 'short'
+    ;
 
 TransportKeyword
     : 'transport'
     ;
 
-ShortKeyword
-    : 'short'
+TimeoutKeyword
+    : 'timeout'
     ;
+
+WriterKeyword: 'writer';
 
 IntKeyword
     : 'int'
@@ -410,6 +481,14 @@ DisconnectedKeyword
     : 'disconnected'
     ;
 
+AbortKeyword
+    : 'abort'
+    ;
+
+AbortedKeyword
+    : 'aborted'
+    ;
+
 FlushKeyword
     : 'flush'
     ;
@@ -449,7 +528,11 @@ HttpContentLengthKeyword
 HttpHeaderKeyword
     : 'header'
     ;
-    
+
+HttpChunkTrailerKeyword
+    : 'trailer'
+    ;
+
 HttpHostKeyword
     : 'host'
     ;
@@ -480,6 +563,11 @@ HttpStatusKeyword
 
 HttpVersionKeyword
     : 'version'
+    ;
+
+ModeValue
+    : 'r'
+    | 'rw'
     ;
 
 // URI cannot begin with any of our data type delimiters, and MUST contain a colon.
@@ -563,6 +651,7 @@ Digit
 
 TextLiteral
     : '"' (EscapeSequence | ~('\\' | '\r' | '\n' | '"'))+ '"'
+    | '\'' (EscapeSequence | ~('\\' | '\r' | '\n' | '\''))+ '\''
     ;
     
 // Any additions to the escaping need to be accounted for in

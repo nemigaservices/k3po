@@ -1,5 +1,5 @@
-/*
- * Copyright 2014, Kaazing Corporation. All rights reserved.
+/**
+ * Copyright 2007-2015, Kaazing Corporation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.kaazing.k3po.lang.internal.ast.builder;
 
 import javax.el.ValueExpression;
@@ -22,6 +21,7 @@ import org.kaazing.k3po.lang.internal.ast.AstStreamNode;
 import org.kaazing.k3po.lang.internal.ast.AstWriteOptionNode;
 import org.kaazing.k3po.lang.internal.ast.value.AstExpressionValue;
 import org.kaazing.k3po.lang.internal.ast.value.AstLiteralBytesValue;
+import org.kaazing.k3po.lang.internal.ast.value.AstLiteralTextValue;
 import org.kaazing.k3po.lang.internal.el.ExpressionContext;
 
 public class AstWriteOptionNodeBuilder extends AbstractAstStreamableNodeBuilder<AstWriteOptionNode, AstWriteOptionNode> {
@@ -37,6 +37,11 @@ public class AstWriteOptionNodeBuilder extends AbstractAstStreamableNodeBuilder<
 
     public AstWriteOptionNodeBuilder setOptionValue(byte[] exactBytes) {
         node.setOptionValue(new AstLiteralBytesValue(exactBytes));
+        return this;
+    }
+
+    public AstWriteOptionNodeBuilder setOptionValue(String literalText) {
+        node.setOptionValue(new AstLiteralTextValue(literalText));
         return this;
     }
 

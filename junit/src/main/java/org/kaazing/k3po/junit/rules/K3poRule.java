@@ -1,24 +1,18 @@
-/*
- * Copyright (c) 2007-2014 Kaazing Corporation. All rights reserved.
+/**
+ * Copyright 2007-2015, Kaazing Corporation. All rights reserved.
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 package org.kaazing.k3po.junit.rules;
 
 import static java.lang.String.format;
@@ -27,13 +21,19 @@ import static org.junit.Assert.assertTrue;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.junit.rules.Verifier;
 import org.junit.runner.Description;
 import org.junit.runner.JUnitCore;
 import org.junit.runners.model.Statement;
+import org.kaazing.k3po.junit.annotation.ScriptProperty;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.net.URLFactory;
 
@@ -42,6 +42,8 @@ import org.kaazing.net.URLFactory;
  *
  */
 public class K3poRule extends Verifier {
+
+    private static final Pattern NAMED_PACKAGE_PATH_PATTERN = Pattern.compile("\\$\\{([A-Za-z]+)\\}(.+)");
 
     /*
      * For some reason earlier versions of JUnit will cause tests to either hang or succeed incorrectly without ever
@@ -70,21 +72,42 @@ public class K3poRule extends Verifier {
     private final Latch latch;
     private String scriptRoot;
     private URL controlURL;
+    private SpecificationStatement statement;
+    private List<String> classOverriddenProperties;
+    private Map<String, String> packagePathsByName;
 
     /**
      * Allocates a new K3poRule.
      */
     public K3poRule() {
         latch = new Latch();
+        classOverriddenProperties = new ArrayList<>();
+        packagePathsByName = new HashMap<>();
     }
 
     /**
      * Sets the ClassPath root of where to look for scripts when resolving them.
-     * @param scriptRoot is a directory/package name of where to resolve scripts from.
+     *
+     * @param packagePath is a package path used resolve relative script names
+     *
      * @return an instance of K3poRule for convenience
      */
-    public K3poRule setScriptRoot(String scriptRoot) {
-        this.scriptRoot = scriptRoot;
+    public K3poRule setScriptRoot(String packagePath) {
+        this.scriptRoot = packagePath;
+        return this;
+    }
+
+    /**
+     * Adds a named ClassPath root of where to look for scripts when resolving them.
+     * Specifications should reference the short name using {@code "${shortName}/..." } in script names.
+     *
+     * @param shortName  the short name used to refer to the package path
+     * @param packagePath a package path used resolve relative script names
+     *
+     * @return an instance of K3poRule for convenience
+     */
+    public K3poRule addScriptRoot(String shortName, String packagePath) {
+        packagePathsByName.put(shortName, packagePath);
         return this;
     }
 
@@ -103,25 +126,44 @@ public class K3poRule extends Verifier {
 
         Specification specification = description.getAnnotation(Specification.class);
         String[] scripts = (specification != null) ? specification.value() : null;
+        ScriptProperty overriddenProperty = description.getAnnotation(ScriptProperty.class);
+        String[] overriddenProperties = (overriddenProperty != null) ? overriddenProperty.value() : null;
+        List<String> methodOverridenScriptProperties = new ArrayList<>();
+        if (overriddenProperties != null) {
+            for (String prop : overriddenProperties) {
+                methodOverridenScriptProperties.add(prop);
+            }
+        }
 
         if (scripts != null) {
             // decorate with K3PO behavior only if @Specification annotation is present
-            String packagePath = this.scriptRoot;
-            if (packagePath == null) {
-                Class<?> testClass = description.getTestClass();
-                String packageName = testClass.getPackage().getName();
-                packagePath = packageName.replaceAll("\\.", "/");
-            }
 
             List<String> scriptNames = new LinkedList<>();
-            for (int i = 0; i < scripts.length; i++) {
+            for (String script : scripts) {
                 // strict compatibility (relax to support fully qualified paths later)
-                if (scripts[i].startsWith("/")) {
+                if (script.startsWith("/")) {
                     throw new IllegalArgumentException("Script path must be relative");
                 }
 
-                String scriptName = format("%s/%s", packagePath, scripts[i]);
-                scriptNames.add(scriptName);
+                Matcher matcher = NAMED_PACKAGE_PATH_PATTERN.matcher(script);
+                if (matcher.matches()) {
+                    String shortName = matcher.group(1);
+                    String relativePath = matcher.group(2);
+                    String packagePath = packagePathsByName.get(shortName);
+
+                    if (packagePath == null) {
+                        throw new IllegalArgumentException("Script short name not found: " + shortName);
+                    }
+
+                    String scriptName = format("%s/%s", packagePath, relativePath);
+                    scriptNames.add(scriptName);
+                }
+                else {
+                    String packagePath = getScriptRoot(description);
+
+                    String scriptName = format("%s/%s", packagePath, script);
+                    scriptNames.add(scriptName);
+                }
             }
 
             URL controlURL = this.controlURL;
@@ -130,7 +172,10 @@ public class K3poRule extends Verifier {
                 controlURL = createURL("tcp://localhost:11642");
             }
 
-            statement = new SpecificationStatement(statement, controlURL, scriptNames, latch);
+            methodOverridenScriptProperties.addAll(classOverriddenProperties);
+            this.statement =
+                    new SpecificationStatement(statement, controlURL, scriptNames, latch, methodOverridenScriptProperties);
+            statement = this.statement;
         }
 
         return super.apply(statement, description);
@@ -170,5 +215,45 @@ public class K3poRule extends Verifier {
         } catch (MalformedURLException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Wait for barrier to fire.
+     * @param barrierName is the name of the barrier to await
+     * @throws InterruptedException if await is interrupted
+     */
+    public void awaitBarrier(String barrierName) throws InterruptedException {
+        statement.awaitBarrier(barrierName);
+    }
+
+    /**
+     * Overrides a script property.
+     * @param property of script
+     * @return K3po rule for convenience
+     */
+    public K3poRule scriptProperty(String property) {
+        this.classOverriddenProperties.add(property);
+        return this;
+    }
+
+    /**
+     * Notify barrier to fire.
+     * @param barrierName is the name for the barrier to notify
+     * @throws InterruptedException if notify is interrupted (note: waits for confirm that is notified)
+     */
+    public void notifyBarrier(String barrierName) throws InterruptedException {
+        statement.notifyBarrier(barrierName);
+    }
+
+    private String getScriptRoot(
+        Description description)
+    {
+        if (scriptRoot == null) {
+            Class<?> testClass = description.getTestClass();
+            String packageName = testClass.getPackage().getName();
+            return packageName.replaceAll("\\.", "/");
+        }
+
+        return scriptRoot;
     }
 }
